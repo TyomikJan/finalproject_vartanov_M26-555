@@ -11,6 +11,7 @@ from valutatrade_hub.core.usecases import NotLoggedInError, RateUnavailableError
 
 PROMPT = "> "
 EXIT_COMMANDS = {"exit", "quit"}
+PORTFOLIO_SEPARATOR = "-" * 33
 
 COMMANDS_HELP = [
     ("register --username <str> --password <str>", "Регистрация"),
@@ -51,14 +52,24 @@ def format_rate(rate: float) -> str:
     return f"{rate:.2f}" if rate >= 1 else f"{rate:.8f}"
 
 
+def format_balance(balance: float) -> str:
+    """Отформатировать баланс: дробные остатки показываются с 4 знаками."""
+    return f"{balance:.2f}" if balance >= 1 else f"{balance:.4f}"
+
+
 def format_trade(title: str, value_label: str, trade: usecases.TradeResult) -> str:
+    """Собрать отчёт о сделке: курс, изменения балансов и сумму в USD."""
+    change_lines = [
+        f"- {change.currency_code}: было {change.balance_before:.4f} "
+        f"→ стало {change.balance_after:.4f}"
+        for change in trade.balance_changes
+    ]
     return "\n".join(
         [
             f"{title}: {trade.amount:.4f} {trade.currency_code} по курсу "
             f"{format_rate(trade.rate)} {trade.base_currency}/{trade.currency_code}",
             "Изменения в портфеле:",
-            f"- {trade.currency_code}: было {trade.balance_before:.4f} "
-            f"→ стало {trade.balance_after:.4f}",
+            *change_lines,
             f"{value_label}: {trade.estimated_value:,.2f} {trade.base_currency}",
         ]
     )
@@ -104,18 +115,15 @@ class CommandLineInterface:
         if not report.wallets:
             return f"{header}\nКошельков пока нет. Купите валюту командой buy."
 
-        table = PrettyTable(["Валюта", "Баланс", f"Стоимость, {report.base_currency}"])
-        table.align = "r"
-        for wallet in report.wallets:
-            table.add_row(
-                [
-                    wallet.currency_code,
-                    f"{wallet.balance:.4f}",
-                    f"{wallet.value_in_base:,.2f}",
-                ]
-            )
+        balances = [format_balance(wallet.balance) for wallet in report.wallets]
+        balance_width = max(len(balance) for balance in balances)
+        wallet_lines = [
+            f"- {wallet.currency_code}: {balance.ljust(balance_width)}  → "
+            f"{wallet.value_in_base:.2f} {report.base_currency}"
+            for wallet, balance in zip(report.wallets, balances)
+        ]
         total_line = f"ИТОГО: {report.total_value:,.2f} {report.base_currency}"
-        return f"{header}\n{table}\n{total_line}"
+        return "\n".join([header, *wallet_lines, PORTFOLIO_SEPARATOR, total_line])
 
     def buy(self, options: dict[str, str]) -> str:
         trade = usecases.buy(

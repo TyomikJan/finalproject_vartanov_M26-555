@@ -1,5 +1,6 @@
 """Бизнес-логика приложения: пользователи, портфели, сделки и курсы валют."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -8,6 +9,7 @@ from valutatrade_hub.core.models import (
     EXCHANGE_RATES_TO_USD,
     Portfolio,
     User,
+    Wallet,
 )
 from valutatrade_hub.core.utils import (
     PORTFOLIOS_FILE,
@@ -20,7 +22,7 @@ from valutatrade_hub.core.utils import (
 )
 
 RATES_TTL = timedelta(minutes=5)
-RATES_SOURCE = "ParserServiceStub"
+RATES_SOURCE = "ParserServiceStub" # заглушка
 
 
 class NotLoggedInError(Exception):
@@ -39,6 +41,9 @@ class RateUnavailableError(Exception):
         super().__init__(
             f"Курс {from_code}→{to_code} недоступен. Повторите попытку позже."
         )
+
+
+# Dataclass для обмена данными с модулем CLI
 
 
 @dataclass(frozen=True)
@@ -72,13 +77,21 @@ class PortfolioReport:
 
 
 @dataclass(frozen=True)
+class BalanceChange:
+    currency_code: str
+    balance_before: float
+    balance_after: float
+
+
+@dataclass(frozen=True)
 class TradeResult:
+    """Итог сделки: курс и изменения балансов затронутых кошельков."""
+
     currency_code: str
     amount: float
     rate: float
     base_currency: str
-    balance_before: float
-    balance_after: float
+    balance_changes: list[BalanceChange]
 
     @property
     def estimated_value(self) -> float:
@@ -152,7 +165,7 @@ def _fetch_rate_from_source(from_code: str, to_code: str) -> float | None:
 
 
 def get_rate(from_code: str, to_code: str) -> RateInfo:
-    """Вернуть курс from_code→to_code.
+    """Вернуть курс from_code → to_code.
 
     Свежий курс (моложе RATES_TTL) берётся из кеша rates.json, иначе
     запрашивается у источника и кеш обновляется. Если источник недоступен,
@@ -198,6 +211,7 @@ def show_portfolio(
     user = _require_login(user)
     base_currency = validate_currency_code(base_currency)
     try:
+        # проверка что валюта существует
         get_rate(BASE_CURRENCY, base_currency)
     except RateUnavailableError as error:
         raise ValueError(f"Неизвестная базовая валюта '{base_currency}'") from error
@@ -222,6 +236,18 @@ def _get_trade_rate(currency_code: str) -> float:
         ) from error
 
 
+def _get_or_create_wallet(portfolio: Portfolio, currency_code: str) -> Wallet:
+    return portfolio.get_wallet(currency_code) or portfolio.add_currency(currency_code)
+
+
+def _change_balance(
+    wallet: Wallet, amount: float, operation: Callable[[float], None]
+) -> BalanceChange:
+    balance_before = wallet.balance
+    operation(amount)
+    return BalanceChange(wallet.currency_code, balance_before, wallet.balance)
+
+
 def buy(user: User | None, currency_code: str, amount: float | str) -> TradeResult:
     """Купить amount единиц валюты; кошелёк создаётся при первой покупке."""
     user = _require_login(user)
@@ -230,19 +256,14 @@ def buy(user: User | None, currency_code: str, amount: float | str) -> TradeResu
     rate = _get_trade_rate(currency_code)
 
     portfolio = _load_portfolio(user)
-    wallet = portfolio.get_wallet(currency_code) or portfolio.add_currency(
-        currency_code
-    )
-    balance_before = wallet.balance
-    wallet.deposit(amount)
+    wallet = _get_or_create_wallet(portfolio, currency_code)
+    balance_changes = [_change_balance(wallet, amount, wallet.deposit)]
     _save_portfolio(portfolio)
-    return TradeResult(
-        currency_code, amount, rate, BASE_CURRENCY, balance_before, wallet.balance
-    )
+    return TradeResult(currency_code, amount, rate, BASE_CURRENCY, balance_changes)
 
 
 def sell(user: User | None, currency_code: str, amount: float | str) -> TradeResult:
-    """Продать amount единиц валюты с существующего кошелька."""
+    """Продать amount единиц валюты; выручка зачисляется на USD-кошелёк."""
     user = _require_login(user)
     currency_code = validate_currency_code(currency_code)
     amount = parse_amount(amount)
@@ -255,9 +276,11 @@ def sell(user: User | None, currency_code: str, amount: float | str) -> TradeRes
             "она создаётся автоматически при первой покупке."
         )
     rate = _get_trade_rate(currency_code)
-    balance_before = wallet.balance
-    wallet.withdraw(amount)
+    balance_changes = [_change_balance(wallet, amount, wallet.withdraw)]
+    if currency_code != BASE_CURRENCY:
+        base_wallet = _get_or_create_wallet(portfolio, BASE_CURRENCY)
+        balance_changes.append(
+            _change_balance(base_wallet, amount * rate, base_wallet.deposit)
+        )
     _save_portfolio(portfolio)
-    return TradeResult(
-        currency_code, amount, rate, BASE_CURRENCY, balance_before, wallet.balance
-    )
+    return TradeResult(currency_code, amount, rate, BASE_CURRENCY, balance_changes)

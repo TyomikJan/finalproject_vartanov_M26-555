@@ -25,6 +25,8 @@ show-portfolio --base USD
 get-rate --from USD --to BTC
 ```
 
+Выручка от продажи зачисляется на USD-кошелёк.
+
 ## Проверка кода
 
 ```bash

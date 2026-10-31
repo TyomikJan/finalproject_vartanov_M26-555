@@ -1,7 +1,7 @@
 [project]
 name = "valutatrade_hub"
 version = "0.1.0"
-description = "Платформа для отсеивания и симуляции торговли валютами"
+description = "Платформа для отслеживания и симуляции торговли валютами"
 authors = [{ name = "Artem Vartanov", email = "artemvartanov13@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.12"
