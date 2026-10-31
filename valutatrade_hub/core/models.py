@@ -2,7 +2,12 @@
 
 from datetime import datetime
 
-from valutatrade_hub.core.utils import generate_salt, hash_password
+from valutatrade_hub.core.utils import (
+    generate_salt,
+    hash_password,
+    parse_amount,
+    validate_currency_code,
+)
 
 MIN_PASSWORD_LENGTH = 4
 BASE_CURRENCY = "USD"
@@ -19,20 +24,6 @@ EXCHANGE_RATES_TO_USD: dict[str, float] = {
 def _validate_password(password: str) -> None:
     if not isinstance(password, str) or len(password) < MIN_PASSWORD_LENGTH:
         raise ValueError(f"Пароль должен быть не короче {MIN_PASSWORD_LENGTH} символов")
-
-
-def _normalize_currency_code(currency_code: str) -> str:
-    if not isinstance(currency_code, str) or not currency_code.strip():
-        raise ValueError("Код валюты должен быть непустой строкой")
-    return currency_code.strip().upper()
-
-
-def _validate_positive_amount(amount: float) -> float:
-    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
-        raise TypeError("Сумма должна быть числом")
-    if amount <= 0:
-        raise ValueError("Сумма должна быть положительным числом")
-    return float(amount)
 
 
 class User:
@@ -136,7 +127,7 @@ class Wallet:
     """Кошелёк пользователя для одной конкретной валюты."""
 
     def __init__(self, currency_code: str, balance: float = 0.0) -> None:
-        self.currency_code = _normalize_currency_code(currency_code)
+        self.currency_code = validate_currency_code(currency_code)
         self.balance = balance
 
     @property
@@ -153,15 +144,15 @@ class Wallet:
 
     def deposit(self, amount: float) -> None:
         """Пополнить баланс на положительную сумму."""
-        self.balance += _validate_positive_amount(amount)
+        self.balance += parse_amount(amount)
 
     def withdraw(self, amount: float) -> None:
         """Снять положительную сумму, не превышающую баланс."""
-        amount = _validate_positive_amount(amount)
+        amount = parse_amount(amount)
         if amount > self._balance:
             raise ValueError(
-                f"Недостаточно средств: доступно {self._balance} "
-                f"{self.currency_code}, требуется {amount} {self.currency_code}"
+                f"Недостаточно средств: доступно {self._balance:.4f} "
+                f"{self.currency_code}, требуется {amount:.4f} {self.currency_code}"
             )
         self.balance -= amount
 
@@ -196,7 +187,7 @@ class Portfolio:
 
     def add_currency(self, currency_code: str) -> Wallet:
         """Добавить пустой кошелёк новой валюты и вернуть его."""
-        currency_code = _normalize_currency_code(currency_code)
+        currency_code = validate_currency_code(currency_code)
         if currency_code in self._wallets:
             raise ValueError(f"Кошелёк {currency_code} уже есть в портфеле")
 
@@ -206,7 +197,7 @@ class Portfolio:
 
     def get_wallet(self, currency_code: str) -> Wallet | None:
         """Вернуть кошелёк по коду валюты или None, если его нет."""
-        return self._wallets.get(_normalize_currency_code(currency_code))
+        return self._wallets.get(validate_currency_code(currency_code))
 
     def get_total_value(
         self,
@@ -218,7 +209,7 @@ class Portfolio:
         exchange_rates — курсы валют к USD; по умолчанию EXCHANGE_RATES_TO_USD.
         """
         rates = exchange_rates or EXCHANGE_RATES_TO_USD
-        base_currency = _normalize_currency_code(base_currency)
+        base_currency = validate_currency_code(base_currency)
         if base_currency not in rates:
             raise ValueError(f"Неизвестна базовая валюта: {base_currency}")
 
