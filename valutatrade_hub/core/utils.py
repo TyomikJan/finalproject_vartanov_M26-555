@@ -38,6 +38,11 @@ def parse_amount(amount: float | str) -> float:
     return parsed_amount
 
 
+def format_rate(rate: float) -> str:
+    """Отформатировать курс: мелкие значения показываются с большей точностью."""
+    return f"{rate:.2f}" if rate >= 1 else f"{rate:.8f}"
+
+
 def generate_salt(length_bytes: int = 8) -> str:
     """Сгенерировать случайную соль в виде hex-строки."""
     return secrets.token_hex(length_bytes)
