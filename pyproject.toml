@@ -1,0 +1,35 @@
+[project]
+name = "valutatrade_hub"
+version = "0.1.0"
+description = "Платформа для отсеивания и симуляции торговли валютами"
+authors = [{ name = "Artem Vartanov", email = "artemvartanov13@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "prettytable>=3.18.0",
+]
+
+
+[project.scripts]
+project = "valutatrade_hub.cli.interface:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+exclude = ["venv", ".venv", "dist", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = []
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.0",
+]
