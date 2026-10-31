@@ -14,6 +14,17 @@ uv sync
 uv run project
 ```
 
+## Команды
+
+```
+register --username alice --password 1234
+login --username alice --password 1234
+buy --currency BTC --amount 0.05
+sell --currency BTC --amount 0.01
+show-portfolio --base USD
+get-rate --from USD --to BTC
+```
+
 ## Проверка кода
 
 ```bash
