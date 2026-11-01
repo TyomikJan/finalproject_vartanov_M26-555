@@ -7,19 +7,33 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT_FILE = PROJECT_ROOT / "pyproject.toml"
 CONFIG_SECTION = "valutatrade"
-PATH_KEYS = {"data_dir", "users_file", "portfolios_file", "rates_file", "log_file"}
+PATH_KEYS = {
+    "data_dir",
+    "users_file",
+    "portfolios_file",
+    "rates_file",
+    "exchange_rates_file",
+    "log_file",
+    "parser_log_file",
+    "env_file",
+}
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "data_dir": "data",
     "users_file": "data/users.json",
     "portfolios_file": "data/portfolios.json",
     "rates_file": "data/rates.json",
+    "exchange_rates_file": "data/exchange_rates.json",
     "rates_ttl_seconds": 300,
+    "update_interval_seconds": 600,
     "default_base_currency": "USD",
+    "initial_balance": 10_000.0,
     "log_file": "logs/actions.log",
+    "parser_log_file": "logs/parser.log",
     "log_level": "INFO",
     "log_max_bytes": 1_048_576,
     "log_backup_count": 5,
+    "env_file": ".env",
 }
 
 

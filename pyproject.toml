@@ -7,11 +7,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "prettytable>=3.18.0",
+    "python-dotenv>=1.2.4",
+    "requests>=2.34.2",
 ]
 
 
 [project.scripts]
 project = "valutatrade_hub.cli.interface:main"
+parser = "valutatrade_hub.parser_service.scheduler:main"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]
@@ -39,9 +42,14 @@ data_dir = "data"
 users_file = "data/users.json"
 portfolios_file = "data/portfolios.json"
 rates_file = "data/rates.json"
+exchange_rates_file = "data/exchange_rates.json"
 rates_ttl_seconds = 300
+update_interval_seconds = 600
 default_base_currency = "USD"
+initial_balance = 10000.0
 log_file = "logs/actions.log"
+parser_log_file = "logs/parser.log"
 log_level = "INFO"
 log_max_bytes = 1048576
 log_backup_count = 5
+env_file = ".env"
