@@ -72,9 +72,11 @@ _CURRENCY_REGISTRY: dict[str, Currency] = {
     for currency in (
         FiatCurrency("US Dollar", "USD", "United States"),
         FiatCurrency("Euro", "EUR", "Eurozone"),
+        FiatCurrency("British Pound", "GBP", "United Kingdom"),
         FiatCurrency("Russian Ruble", "RUB", "Russia"),
         CryptoCurrency("Bitcoin", "BTC", "SHA-256", 1.12e12),
         CryptoCurrency("Ethereum", "ETH", "Ethash", 4.5e11),
+        CryptoCurrency("Solana", "SOL", "Proof of History", 6.5e10),
     )
 }
 
@@ -96,3 +98,12 @@ def get_currency(code: str) -> Currency:
 def get_supported_codes() -> list[str]:
     """Вернуть коды всех поддерживаемых валют."""
     return list(_CURRENCY_REGISTRY)
+
+
+def get_codes_by_type(currency_type: type[Currency]) -> tuple[str, ...]:
+    """Вернуть коды валют реестра заданного типа (FiatCurrency или CryptoCurrency)."""
+    return tuple(
+        code
+        for code, currency in _CURRENCY_REGISTRY.items()
+        if isinstance(currency, currency_type)
+    )
