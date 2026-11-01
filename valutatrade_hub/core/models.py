@@ -2,12 +2,9 @@
 
 from datetime import datetime
 
-from valutatrade_hub.core.utils import (
-    generate_salt,
-    hash_password,
-    parse_amount,
-    validate_currency_code,
-)
+from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.exceptions import InsufficientFundsError
+from valutatrade_hub.core.utils import generate_salt, hash_password, parse_amount
 
 MIN_PASSWORD_LENGTH = 4
 BASE_CURRENCY = "USD"
@@ -127,8 +124,12 @@ class Wallet:
     """Кошелёк пользователя для одной конкретной валюты."""
 
     def __init__(self, currency_code: str, balance: float = 0.0) -> None:
-        self.currency_code = validate_currency_code(currency_code)
+        self._currency_code = get_currency(currency_code).code
         self.balance = balance
+
+    @property
+    def currency_code(self) -> str:
+        return self._currency_code
 
     @property
     def balance(self) -> float:
@@ -150,10 +151,7 @@ class Wallet:
         """Снять положительную сумму, не превышающую баланс."""
         amount = parse_amount(amount)
         if amount > self._balance:
-            raise ValueError(
-                f"Недостаточно средств: доступно {self._balance:.4f} "
-                f"{self.currency_code}, требуется {amount:.4f} {self.currency_code}"
-            )
+            raise InsufficientFundsError(self._balance, amount, self._currency_code)
         self.balance -= amount
 
     def get_balance_info(self) -> str:
@@ -187,7 +185,7 @@ class Portfolio:
 
     def add_currency(self, currency_code: str) -> Wallet:
         """Добавить пустой кошелёк новой валюты и вернуть его."""
-        currency_code = validate_currency_code(currency_code)
+        currency_code = get_currency(currency_code).code
         if currency_code in self._wallets:
             raise ValueError(f"Кошелёк {currency_code} уже есть в портфеле")
 
@@ -197,7 +195,7 @@ class Portfolio:
 
     def get_wallet(self, currency_code: str) -> Wallet | None:
         """Вернуть кошелёк по коду валюты или None, если его нет."""
-        return self._wallets.get(validate_currency_code(currency_code))
+        return self._wallets.get(get_currency(currency_code).code)
 
     def get_total_value(
         self,
@@ -209,9 +207,9 @@ class Portfolio:
         exchange_rates — курсы валют к USD; по умолчанию EXCHANGE_RATES_TO_USD.
         """
         rates = exchange_rates or EXCHANGE_RATES_TO_USD
-        base_currency = validate_currency_code(base_currency)
+        base_currency = get_currency(base_currency).code
         if base_currency not in rates:
-            raise ValueError(f"Неизвестна базовая валюта: {base_currency}")
+            raise ValueError(f"Нет курса для базовой валюты: {base_currency}")
 
         total_in_usd = 0.0
         for currency_code, wallet in self._wallets.items():

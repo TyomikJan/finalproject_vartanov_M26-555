@@ -3,9 +3,11 @@
 from abc import ABC, abstractmethod
 
 from valutatrade_hub.core.exceptions import CurrencyNotFoundError
-
-MIN_CODE_LENGTH = 2
-MAX_CODE_LENGTH = 5
+from valutatrade_hub.core.utils import (
+    MAX_CURRENCY_CODE_LENGTH,
+    MIN_CURRENCY_CODE_LENGTH,
+    validate_currency_code,
+)
 
 
 class Currency(ABC):
@@ -37,13 +39,14 @@ class Currency(ABC):
     def code(self, value: str) -> None:
         is_valid_code = (
             isinstance(value, str)
-            and MIN_CODE_LENGTH <= len(value) <= MAX_CODE_LENGTH
+            and MIN_CURRENCY_CODE_LENGTH <= len(value) <= MAX_CURRENCY_CODE_LENGTH
             and value.isalnum()
             and value.isupper()
         )
         if not is_valid_code:
             raise ValueError(
-                f"Код валюты должен состоять из {MIN_CODE_LENGTH}–{MAX_CODE_LENGTH} "
+                "Код валюты должен состоять из "
+                f"{MIN_CURRENCY_CODE_LENGTH}–{MAX_CURRENCY_CODE_LENGTH} "
                 f"символов в верхнем регистре без пробелов: '{value}'"
             )
         self._code = value
@@ -96,12 +99,13 @@ def get_currency(code: str) -> Currency:
     """Вернуть валюту по коду (регистр не важен).
 
     Raises:
+        ValueError: код имеет некорректный формат.
         CurrencyNotFoundError: код отсутствует в реестре.
     """
-    normalized_code = code.strip().upper() if isinstance(code, str) else code
+    normalized_code = validate_currency_code(code)
     currency = _CURRENCY_REGISTRY.get(normalized_code)
     if currency is None:
-        raise CurrencyNotFoundError(str(code))
+        raise CurrencyNotFoundError(normalized_code)
     return currency
 
 
