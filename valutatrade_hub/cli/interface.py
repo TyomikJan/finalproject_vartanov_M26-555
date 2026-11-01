@@ -6,8 +6,16 @@ from collections.abc import Callable
 from prettytable import PrettyTable
 
 from valutatrade_hub.core import usecases
-from valutatrade_hub.core.models import BASE_CURRENCY, User
-from valutatrade_hub.core.usecases import NotLoggedInError, RateUnavailableError
+from valutatrade_hub.core.currencies import get_currency, get_supported_codes
+from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
+    CurrencyNotFoundError,
+    InsufficientFundsError,
+    ValutaTradeError,
+)
+from valutatrade_hub.core.models import User
+from valutatrade_hub.core.utils import format_rate
+from valutatrade_hub.logging_config import setup_logging
 
 PROMPT = "> "
 EXIT_COMMANDS = {"exit", "quit"}
@@ -47,11 +55,6 @@ def require_option(options: dict[str, str], name: str) -> str:
     return options[name]
 
 
-def format_rate(rate: float) -> str:
-    """Отформатировать курс: мелкие значения показываются с большей точностью."""
-    return f"{rate:.2f}" if rate >= 1 else f"{rate:.8f}"
-
-
 def format_balance(balance: float) -> str:
     """Отформатировать баланс: дробные остатки показываются с 4 знаками."""
     return f"{balance:.2f}" if balance >= 1 else f"{balance:.4f}"
@@ -71,6 +74,7 @@ def format_trade(title: str, value_label: str, trade: usecases.TradeResult) -> s
             "Изменения в портфеле:",
             *change_lines,
             f"{value_label}: {trade.estimated_value:,.2f} {trade.base_currency}",
+            f"Валюта: {get_currency(trade.currency_code).get_display_info()}",
         ]
     )
 
@@ -106,9 +110,7 @@ class CommandLineInterface:
         return f"Вы вошли как '{self.current_user.username}'"
 
     def show_portfolio(self, options: dict[str, str]) -> str:
-        report = usecases.show_portfolio(
-            self.current_user, options.get("base", BASE_CURRENCY)
-        )
+        report = usecases.show_portfolio(self.current_user, options.get("base"))
         header = (
             f"Портфель пользователя '{report.username}' (база: {report.base_currency}):"
         )
@@ -174,7 +176,17 @@ class CommandLineInterface:
             return f"Неизвестная команда '{command_name}'. Введите help."
         try:
             return handler(parse_options(arguments))
-        except (ValueError, NotLoggedInError, RateUnavailableError) as error:
+        except InsufficientFundsError as error:
+            return str(error)
+        except CurrencyNotFoundError as error:
+            supported_codes = ", ".join(get_supported_codes())
+            return (
+                f"{error}\nПоддерживаемые валюты: {supported_codes}. "
+                "Курс можно проверить командой get-rate --from <код> --to <код>."
+            )
+        except ApiRequestError as error:
+            return f"{error}\nПовторите попытку позже или проверьте подключение к сети."
+        except (ValutaTradeError, ValueError) as error:
             return str(error)
 
     def run(self) -> None:
@@ -195,4 +207,5 @@ class CommandLineInterface:
 
 def main() -> None:
     """Точка входа CLI."""
+    setup_logging()
     CommandLineInterface().run()

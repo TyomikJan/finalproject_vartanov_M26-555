@@ -1,46 +1,30 @@
-"""Бизнес-логика приложения: пользователи, портфели, сделки и курсы валют."""
+"""Бизнес-логика приложения: пользователи, портфели, сделки и курсы валют.
+
+Конфигурация берётся из синглтона SettingsLoader (базовая валюта, TTL курсов),
+данные читаются и пишутся через синглтон DatabaseManager. Операции
+register, login, buy и sell логируются декоратором @log_action.
+"""
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from valutatrade_hub.core.models import (
-    BASE_CURRENCY,
-    EXCHANGE_RATES_TO_USD,
-    Portfolio,
-    User,
-    Wallet,
+from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
+    NotLoggedInError,
+    WalletNotFoundError,
 )
-from valutatrade_hub.core.utils import (
-    PORTFOLIOS_FILE,
-    RATES_FILE,
-    USERS_FILE,
-    load_json,
-    parse_amount,
-    save_json,
-    validate_currency_code,
-)
+from valutatrade_hub.core.models import EXCHANGE_RATES_TO_USD, Portfolio, User, Wallet
+from valutatrade_hub.core.utils import parse_amount
+from valutatrade_hub.decorators import log_action
+from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.infra.settings import SettingsLoader
 
-RATES_TTL = timedelta(minutes=5)
-RATES_SOURCE = "ParserServiceStub" # заглушка
+RATES_SOURCE = "ParserServiceStub"  # заглушка
 
-
-class NotLoggedInError(Exception):
-    """Команда требует входа в систему."""
-
-    def __init__(self) -> None:
-        super().__init__("Сначала выполните login")
-
-
-class RateUnavailableError(Exception):
-    """Курс валютной пары не удалось получить ни из кеша, ни из источника."""
-
-    def __init__(self, from_code: str, to_code: str) -> None:
-        self.from_code = from_code
-        self.to_code = to_code
-        super().__init__(
-            f"Курс {from_code}→{to_code} недоступен. Повторите попытку позже."
-        )
+settings = SettingsLoader()
+database = DatabaseManager()
 
 
 # Dataclass для обмена данными с модулем CLI
@@ -98,12 +82,12 @@ class TradeResult:
         return self.amount * self.rate
 
 
+def _base_currency() -> str:
+    return settings.get("default_base_currency")
+
+
 def _load_users() -> list[User]:
-    return [User.from_dict(record) for record in load_json(USERS_FILE, [])]
-
-
-def _save_users(users: list[User]) -> None:
-    save_json(USERS_FILE, [user.to_dict() for user in users])
+    return [User.from_dict(record) for record in database.read("users")]
 
 
 def _find_user(username: str) -> User | None:
@@ -111,20 +95,20 @@ def _find_user(username: str) -> User | None:
 
 
 def _load_portfolio(user: User) -> Portfolio:
-    for record in load_json(PORTFOLIOS_FILE, []):
+    for record in database.read("portfolios"):
         if record["user_id"] == user.user_id:
             return Portfolio.from_dict(record, user)
     return Portfolio(user)
 
 
 def _save_portfolio(portfolio: Portfolio) -> None:
-    records = [
-        record
-        for record in load_json(PORTFOLIOS_FILE, [])
-        if record["user_id"] != portfolio.user_id
-    ]
-    records.append(portfolio.to_dict())
-    save_json(PORTFOLIOS_FILE, records)
+    def replace_record(records: list[dict]) -> list[dict]:
+        other_records = [
+            record for record in records if record["user_id"] != portfolio.user_id
+        ]
+        return [*other_records, portfolio.to_dict()]
+
+    database.update("portfolios", replace_record)
 
 
 def _require_login(user: User | None) -> User:
@@ -133,20 +117,24 @@ def _require_login(user: User | None) -> User:
     return user
 
 
+@log_action("REGISTER")
 def register(username: str, password: str) -> User:
     """Зарегистрировать пользователя и создать ему пустой портфель."""
-    users = _load_users()
-    if any(existing.username == username.strip() for existing in users):
-        raise ValueError(f"Имя пользователя '{username}' уже занято")
 
-    next_user_id = max((existing.user_id for existing in users), default=0) + 1
-    user = User.create(user_id=next_user_id, username=username, password=password)
-    users.append(user)
-    _save_users(users)
+    def add_user(records: list[dict]) -> list[dict]:
+        if any(record["username"] == username.strip() for record in records):
+            raise ValueError(f"Имя пользователя '{username}' уже занято")
+        next_user_id = max((record["user_id"] for record in records), default=0) + 1
+        user = User.create(user_id=next_user_id, username=username, password=password)
+        return [*records, user.to_dict()]
+
+    updated_records = database.update("users", add_user)
+    user = User.from_dict(updated_records[-1])
     _save_portfolio(Portfolio(user))
     return user
 
 
+@log_action("LOGIN")
 def login(username: str, password: str) -> User:
     """Найти пользователя и проверить его пароль."""
     user = _find_user(username)
@@ -157,65 +145,55 @@ def login(username: str, password: str) -> User:
     return user
 
 
-def _fetch_rate_from_source(from_code: str, to_code: str) -> float | None:
+def _fetch_rate_from_source(from_code: str, to_code: str) -> float:
     """Заглушка Parser Service: кросс-курс через фиксированные курсы к USD."""
     if from_code not in EXCHANGE_RATES_TO_USD or to_code not in EXCHANGE_RATES_TO_USD:
-        return None
+        raise ApiRequestError(f"нет данных о курсе {from_code}→{to_code}")
     return EXCHANGE_RATES_TO_USD[from_code] / EXCHANGE_RATES_TO_USD[to_code]
 
 
 def get_rate(from_code: str, to_code: str) -> RateInfo:
-    """Вернуть курс from_code → to_code.
+    """Вернуть курс from_code → to_code и время его обновления.
 
-    Свежий курс (моложе RATES_TTL) берётся из кеша rates.json, иначе
-    запрашивается у источника и кеш обновляется. Если источник недоступен,
-    используется устаревшее значение из кеша, когда оно есть.
+    Свежий курс (моложе rates_ttl_seconds из настроек) берётся из кеша
+    rates.json, иначе запрашивается у источника и кеш обновляется.
+
+    Raises:
+        CurrencyNotFoundError: один из кодов не поддерживается.
+        ApiRequestError: кеш устарел, а источник не смог вернуть курс.
     """
-    from_code = validate_currency_code(from_code)
-    to_code = validate_currency_code(to_code)
+    from_code = get_currency(from_code).code
+    to_code = get_currency(to_code).code
     now = datetime.now()
     if from_code == to_code:
         return RateInfo(from_code, to_code, 1.0, now)
 
-    cache = load_json(RATES_FILE, {})
     pair_key = f"{from_code}_{to_code}"
-    cached_entry = cache.get(pair_key)
-    cached_rate = None
+    cached_entry = database.read("rates").get(pair_key)
     if cached_entry:
-        cached_rate = RateInfo(
-            from_code,
-            to_code,
-            cached_entry["rate"],
-            datetime.fromisoformat(cached_entry["updated_at"]),
-        )
-        if now - cached_rate.updated_at < RATES_TTL:
-            return cached_rate
+        updated_at = datetime.fromisoformat(cached_entry["updated_at"])
+        rates_ttl = timedelta(seconds=settings.get("rates_ttl_seconds"))
+        if now - updated_at < rates_ttl:
+            return RateInfo(from_code, to_code, cached_entry["rate"], updated_at)
 
     fresh_rate = _fetch_rate_from_source(from_code, to_code)
-    if fresh_rate is None:
-        if cached_rate is not None:
-            return cached_rate
-        raise RateUnavailableError(from_code, to_code)
 
-    cache[pair_key] = {"rate": fresh_rate, "updated_at": now.isoformat()}
-    cache["source"] = RATES_SOURCE
-    cache["last_refresh"] = now.isoformat()
-    save_json(RATES_FILE, cache)
+    def store_rate(rates: dict) -> dict:
+        rates[pair_key] = {"rate": fresh_rate, "updated_at": now.isoformat()}
+        rates["source"] = RATES_SOURCE
+        rates["last_refresh"] = now.isoformat()
+        return rates
+
+    database.update("rates", store_rate)
     return RateInfo(from_code, to_code, fresh_rate, now)
 
 
 def show_portfolio(
-    user: User | None, base_currency: str = BASE_CURRENCY
+    user: User | None, base_currency: str | None = None
 ) -> PortfolioReport:
     """Собрать балансы кошельков и их стоимость в базовой валюте."""
     user = _require_login(user)
-    base_currency = validate_currency_code(base_currency)
-    try:
-        # проверка что валюта существует
-        get_rate(BASE_CURRENCY, base_currency)
-    except RateUnavailableError as error:
-        raise ValueError(f"Неизвестная базовая валюта '{base_currency}'") from error
-
+    base_currency = get_currency(base_currency or _base_currency()).code
     wallet_values = [
         WalletValue(
             currency_code=currency_code,
@@ -225,15 +203,6 @@ def show_portfolio(
         for currency_code, wallet in _load_portfolio(user).wallets.items()
     ]
     return PortfolioReport(user.username, base_currency, wallet_values)
-
-
-def _get_trade_rate(currency_code: str) -> float:
-    try:
-        return get_rate(currency_code, BASE_CURRENCY).rate
-    except RateUnavailableError as error:
-        raise ValueError(
-            f"Не удалось получить курс для {currency_code}→{BASE_CURRENCY}"
-        ) from error
 
 
 def _get_or_create_wallet(portfolio: Portfolio, currency_code: str) -> Wallet:
@@ -248,39 +217,45 @@ def _change_balance(
     return BalanceChange(wallet.currency_code, balance_before, wallet.balance)
 
 
+@log_action("BUY", verbose=True)
 def buy(user: User | None, currency_code: str, amount: float | str) -> TradeResult:
     """Купить amount единиц валюты; кошелёк создаётся при первой покупке."""
     user = _require_login(user)
-    currency_code = validate_currency_code(currency_code)
+    currency_code = get_currency(currency_code).code
     amount = parse_amount(amount)
-    rate = _get_trade_rate(currency_code)
+    base_currency = _base_currency()
+    rate = get_rate(currency_code, base_currency).rate
 
     portfolio = _load_portfolio(user)
     wallet = _get_or_create_wallet(portfolio, currency_code)
     balance_changes = [_change_balance(wallet, amount, wallet.deposit)]
     _save_portfolio(portfolio)
-    return TradeResult(currency_code, amount, rate, BASE_CURRENCY, balance_changes)
+    return TradeResult(currency_code, amount, rate, base_currency, balance_changes)
 
 
+@log_action("SELL", verbose=True)
 def sell(user: User | None, currency_code: str, amount: float | str) -> TradeResult:
-    """Продать amount единиц валюты; выручка зачисляется на USD-кошелёк."""
+    """Продать amount единиц валюты; выручка зачисляется на кошелёк базовой валюты.
+
+    Raises:
+        WalletNotFoundError: кошелька в этой валюте нет.
+        InsufficientFundsError: на кошельке меньше, чем amount.
+    """
     user = _require_login(user)
-    currency_code = validate_currency_code(currency_code)
+    currency_code = get_currency(currency_code).code
     amount = parse_amount(amount)
+    base_currency = _base_currency()
 
     portfolio = _load_portfolio(user)
     wallet = portfolio.get_wallet(currency_code)
     if wallet is None:
-        raise ValueError(
-            f"У вас нет кошелька '{currency_code}'. Добавьте валюту: "
-            "она создаётся автоматически при первой покупке."
-        )
-    rate = _get_trade_rate(currency_code)
+        raise WalletNotFoundError(currency_code)
+    rate = get_rate(currency_code, base_currency).rate
     balance_changes = [_change_balance(wallet, amount, wallet.withdraw)]
-    if currency_code != BASE_CURRENCY:
-        base_wallet = _get_or_create_wallet(portfolio, BASE_CURRENCY)
+    if currency_code != base_currency:
+        base_wallet = _get_or_create_wallet(portfolio, base_currency)
         balance_changes.append(
             _change_balance(base_wallet, amount * rate, base_wallet.deposit)
         )
     _save_portfolio(portfolio)
-    return TradeResult(currency_code, amount, rate, BASE_CURRENCY, balance_changes)
+    return TradeResult(currency_code, amount, rate, base_currency, balance_changes)
