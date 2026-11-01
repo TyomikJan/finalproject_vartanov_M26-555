@@ -3,7 +3,6 @@
 import json
 import os
 import tempfile
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -13,11 +12,12 @@ COLLECTION_DEFAULTS: dict[str, list | dict] = {
     "users": [],
     "portfolios": [],
     "rates": {},
+    "exchange_rates": [],
 }
 
 
 class DatabaseManager:
-    """Чтение и запись коллекций users, portfolios и rates.
+    """Чтение и запись коллекций users, portfolios, rates и exchange_rates.
 
     Путь к файлу каждой коллекции берётся из SettingsLoader
     (ключ "<коллекция>_file"). Запись атомарна: данные пишутся во временный
@@ -56,15 +56,6 @@ class DatabaseManager:
         except BaseException:
             Path(temp_name).unlink(missing_ok=True)
             raise
-
-    def update(self, collection: str, modify: Callable[[Any], Any]) -> Any:
-        """Прочитать коллекцию, изменить её функцией modify и записать результат.
-
-        Если modify бросает исключение, файл остаётся без изменений.
-        """
-        updated_data = modify(self.read(collection))
-        self.write(collection, updated_data)
-        return updated_data
 
     @staticmethod
     def _path(collection: str) -> Path:

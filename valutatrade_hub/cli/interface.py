@@ -2,6 +2,7 @@
 
 import shlex
 from collections.abc import Callable
+from pathlib import Path
 
 from prettytable import PrettyTable
 
@@ -15,11 +16,11 @@ from valutatrade_hub.core.exceptions import (
 )
 from valutatrade_hub.core.models import User
 from valutatrade_hub.core.utils import format_rate
-from valutatrade_hub.logging_config import setup_logging
+from valutatrade_hub.infra.settings import PROJECT_ROOT, SettingsLoader
+from valutatrade_hub.logging_config import parser_console_output, setup_logging
 
 PROMPT = "> "
 EXIT_COMMANDS = {"exit", "quit"}
-PORTFOLIO_SEPARATOR = "-" * 33
 
 COMMANDS_HELP = [
     ("register --username <str> --password <str>", "Регистрация"),
@@ -28,6 +29,11 @@ COMMANDS_HELP = [
     ("buy --currency <str> --amount <float>", "Купить валюту"),
     ("sell --currency <str> --amount <float>", "Продать валюту"),
     ("get-rate --from <str> --to <str>", "Курс валюты"),
+    ("update-rates [--source coingecko|exchangerate]", "Обновить курсы из API"),
+    (
+        "show-rates [--currency <str>] [--top <int>] [--base <str>]",
+        "Курсы из локального кеша",
+    ),
     ("help", "Список команд"),
     ("exit", "Выход"),
 ]
@@ -91,10 +97,18 @@ class CommandLineInterface:
             "buy": self.buy,
             "sell": self.sell,
             "get-rate": self.get_rate,
+            "update-rates": self.update_rates,
+            "show-rates": self.show_rates,
             "help": self.show_help,
         }
 
+    @property
+    def current_user_id(self) -> int | None:
+        """id пользователя текущей сессии или None, если вход не выполнен."""
+        return self.current_user.user_id if self.current_user else None
+
     def register(self, options: dict[str, str]) -> str:
+        """Зарегистрировать пользователя (--username, --password)."""
         user = usecases.register(
             require_option(options, "username"), require_option(options, "password")
         )
@@ -104,46 +118,54 @@ class CommandLineInterface:
         )
 
     def login(self, options: dict[str, str]) -> str:
+        """Войти и запомнить пользователя; новый вход заменяет текущую сессию."""
         self.current_user = usecases.login(
             require_option(options, "username"), require_option(options, "password")
         )
         return f"Вы вошли как '{self.current_user.username}'"
 
     def show_portfolio(self, options: dict[str, str]) -> str:
-        report = usecases.show_portfolio(self.current_user, options.get("base"))
+        """Показать кошельки и итоговую стоимость таблицей."""
+        report = usecases.show_portfolio(self.current_user_id, options.get("base"))
         header = (
             f"Портфель пользователя '{report.username}' (база: {report.base_currency}):"
         )
         if not report.wallets:
             return f"{header}\nКошельков пока нет. Купите валюту командой buy."
 
-        balances = [format_balance(wallet.balance) for wallet in report.wallets]
-        balance_width = max(len(balance) for balance in balances)
-        wallet_lines = [
-            f"- {wallet.currency_code}: {balance.ljust(balance_width)}  → "
-            f"{wallet.value_in_base:.2f} {report.base_currency}"
-            for wallet, balance in zip(report.wallets, balances)
-        ]
+        table = PrettyTable(["Валюта", "Баланс", f"Стоимость, {report.base_currency}"])
+        table.align = "r"
+        for wallet in report.wallets:
+            table.add_row(
+                [
+                    wallet.currency_code,
+                    format_balance(wallet.balance),
+                    f"{wallet.value_in_base:,.2f}",
+                ]
+            )
         total_line = f"ИТОГО: {report.total_value:,.2f} {report.base_currency}"
-        return "\n".join([header, *wallet_lines, PORTFOLIO_SEPARATOR, total_line])
+        return f"{header}\n{table}\n{total_line}"
 
     def buy(self, options: dict[str, str]) -> str:
+        """Купить валюту (--currency, --amount) и показать изменения."""
         trade = usecases.buy(
-            self.current_user,
+            self.current_user_id,
             require_option(options, "currency"),
             require_option(options, "amount"),
         )
         return format_trade("Покупка выполнена", "Оценочная стоимость покупки", trade)
 
     def sell(self, options: dict[str, str]) -> str:
+        """Продать валюту (--currency, --amount) и показать изменения."""
         trade = usecases.sell(
-            self.current_user,
+            self.current_user_id,
             require_option(options, "currency"),
             require_option(options, "amount"),
         )
         return format_trade("Продажа выполнена", "Оценочная выручка", trade)
 
     def get_rate(self, options: dict[str, str]) -> str:
+        """Показать прямой и обратный курс (--from, --to)."""
         rate_info = usecases.get_rate(
             require_option(options, "from"), require_option(options, "to")
         )
@@ -155,7 +177,47 @@ class CommandLineInterface:
             f"{format_rate(rate_info.inverse_rate)}"
         )
 
+    def update_rates(self, options: dict[str, str]) -> str:
+        """Запустить Parser Service и сообщить итог обновления.
+
+        Только здесь логи парсера дублируются в консоль; при get-rate,
+        buy и sell обновление кеша пишет их лишь в parser.log.
+        """
+        with parser_console_output():
+            result = usecases.update_rates(options.get("source"))
+        if result.has_errors:
+            parser_log_file = Path(SettingsLoader().get("parser_log_file"))
+            return (
+                "Update completed with errors. "
+                f"Check {parser_log_file.relative_to(PROJECT_ROOT)} for details."
+            )
+        total_rates = sum(source.rates_count for source in result.source_results)
+        return (
+            f"Update successful. Total rates updated: {total_rates}. "
+            f"Last refresh: {result.last_refresh}"
+        )
+
+    def show_rates(self, options: dict[str, str]) -> str:
+        """Показать курсы из кеша с фильтрами --currency, --top и --base."""
+        cached_rates = usecases.show_rates(
+            options.get("currency"), options.get("top"), options.get("base")
+        )
+        table = PrettyTable(["Пара", "Курс", "Обновлено (UTC)"])
+        table.align = "r"
+        table.align["Пара"] = "l"
+        for cached_rate in cached_rates.rates:
+            table.add_row(
+                [
+                    cached_rate.pair_key,
+                    format_rate(cached_rate.rate),
+                    cached_rate.updated_at,
+                ]
+            )
+        header = f"Rates from cache (updated at {cached_rates.last_refresh}):"
+        return f"{header}\n{table}"
+
     def show_help(self, options: dict[str, str]) -> str:
+        """Показать таблицу доступных команд."""
         table = PrettyTable(["Команда", "Описание"])
         table.align = "l"
         table.add_rows(COMMANDS_HELP)

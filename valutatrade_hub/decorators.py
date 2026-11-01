@@ -21,9 +21,10 @@ def _format_amount(amount: Any) -> str:
 
 def _describe_call(arguments: dict[str, Any]) -> list[str]:
     fields = []
-    user = arguments.get("user")
-    username = getattr(user, "username", None) or arguments.get("username")
-    fields.append(f"user={username!r}")
+    if "user_id" in arguments:
+        fields.append(f"user_id={arguments['user_id']}")
+    if "username" in arguments:
+        fields.append(f"user={arguments['username']!r}")
     if "currency_code" in arguments:
         fields.append(f"currency={str(arguments['currency_code']).upper()!r}")
     if "amount" in arguments:

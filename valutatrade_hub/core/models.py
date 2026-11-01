@@ -9,14 +9,6 @@ from valutatrade_hub.core.utils import generate_salt, hash_password, parse_amoun
 MIN_PASSWORD_LENGTH = 4
 BASE_CURRENCY = "USD"
 
-EXCHANGE_RATES_TO_USD: dict[str, float] = {
-    "USD": 1.0,
-    "EUR": 1.08,
-    "RUB": 0.011,
-    "BTC": 60000.0,
-    "ETH": 3000.0,
-}
-
 
 def _validate_password(password: str) -> None:
     if not isinstance(password, str) or len(password) < MIN_PASSWORD_LENGTH:
@@ -159,19 +151,35 @@ class Wallet:
         return f"{self.currency_code}: {self._balance:.4f}"
 
     def to_dict(self) -> dict[str, str | float]:
+        """Сериализовать кошелёк в словарь с кодом валюты и балансом."""
         return {"currency_code": self.currency_code, "balance": self._balance}
 
 
 class Portfolio:
-    """Набор кошельков одного пользователя."""
+    """Набор кошельков одного пользователя.
 
-    def __init__(self, user: User, wallets: dict[str, Wallet] | None = None) -> None:
+    Модель не обращается к хранилищу: объект User и курсы валют
+    передаёт снаружи usecase.
+    """
+
+    def __init__(
+        self,
+        user_id: int,
+        wallets: dict[str, Wallet] | None = None,
+        user: User | None = None,
+    ) -> None:
+        if user is not None and user.user_id != user_id:
+            raise ValueError(
+                f"Портфель пользователя {user_id} нельзя связать "
+                f"с пользователем {user.user_id}"
+            )
+        self._user_id = user_id
         self._user = user
-        self._user_id = user.user_id
         self._wallets: dict[str, Wallet] = dict(wallets) if wallets else {}
 
     @property
-    def user(self) -> User:
+    def user(self) -> User | None:
+        """Владелец портфеля, если он был передан в конструктор."""
         return self._user
 
     @property
@@ -198,23 +206,25 @@ class Portfolio:
         return self._wallets.get(get_currency(currency_code).code)
 
     def get_total_value(
-        self,
-        base_currency: str = BASE_CURRENCY,
-        exchange_rates: dict[str, float] | None = None,
+        self, base_currency: str = BASE_CURRENCY, *, rates: dict[str, float]
     ) -> float:
         """Посчитать стоимость всех кошельков в базовой валюте.
 
-        exchange_rates — курсы валют к USD; по умолчанию EXCHANGE_RATES_TO_USD.
+        rates — курсы валют к USD вида {"USD": 1.0, "BTC": 59337.21}.
+        Модель не читает хранилище сама: актуальные курсы передаёт usecase.
+
+        Raises:
+            CurrencyNotFoundError: базовая валюта не поддерживается.
+            ValueError: для одной из валют нет курса.
         """
-        rates = exchange_rates or EXCHANGE_RATES_TO_USD
         base_currency = get_currency(base_currency).code
         if base_currency not in rates:
-            raise ValueError(f"Нет курса для базовой валюты: {base_currency}")
+            raise ValueError(f"Нет курса для валюты {base_currency}")
 
         total_in_usd = 0.0
         for currency_code, wallet in self._wallets.items():
             if currency_code not in rates:
-                raise ValueError(f"Нет курса для валюты: {currency_code}")
+                raise ValueError(f"Нет курса для валюты {currency_code}")
             total_in_usd += wallet.balance * rates[currency_code]
         return total_in_usd / rates[base_currency]
 
@@ -229,15 +239,10 @@ class Portfolio:
         }
 
     @classmethod
-    def from_dict(cls, data: dict, user: User) -> "Portfolio":
-        """Восстановить портфель владельца user из записи portfolios.json."""
-        if data["user_id"] != user.user_id:
-            raise ValueError(
-                f"Портфель принадлежит пользователю {data['user_id']}, "
-                f"а не {user.user_id}"
-            )
+    def from_dict(cls, data: dict, user: User | None = None) -> "Portfolio":
+        """Восстановить портфель из записи portfolios.json."""
         wallets = {
             currency_code: Wallet(currency_code, wallet_data["balance"])
             for currency_code, wallet_data in data.get("wallets", {}).items()
         }
-        return cls(user=user, wallets=wallets)
+        return cls(data["user_id"], wallets, user=user)
