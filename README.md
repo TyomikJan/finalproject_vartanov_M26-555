@@ -2,6 +2,9 @@
 
 Консольное приложение для симуляции торговли валютами.
 
+## Демо
+[![asciicast](https://asciinema.org/a/g016FEepH4C85MxT.svg)](https://asciinema.org/a/g016FEepH4C85MxT)
+
 ## Установка и запуск
 
 Нужны Python 3.12+ и [uv](https://docs.astral.sh/uv/).
