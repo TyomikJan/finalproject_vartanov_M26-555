@@ -9,10 +9,10 @@ from typing import Any
 
 from valutatrade_hub.infra.settings import SettingsLoader
 
-COLLECTION_DEFAULTS: dict[str, Callable[[], Any]] = {
-    "users": list,
-    "portfolios": list,
-    "rates": dict,
+COLLECTION_DEFAULTS: dict[str, list | dict] = {
+    "users": [],
+    "portfolios": [],
+    "rates": {},
 }
 
 
@@ -39,7 +39,8 @@ class DatabaseManager:
             with self._path(collection).open(encoding="utf-8") as file:
                 return json.load(file)
         except (FileNotFoundError, json.JSONDecodeError):
-            return COLLECTION_DEFAULTS[collection]()
+            # возвращает пустой список/словарь в случае ошибки
+            return COLLECTION_DEFAULTS[collection].copy()
 
     def write(self, collection: str, data: Any) -> None:
         """Атомарно записать коллекцию целиком."""

@@ -19,14 +19,12 @@ LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 
 def setup_logging() -> logging.Logger:
-    """Подключить файловый обработчик с ротацией к логгеру операций.
-
-    Повторный вызов не добавляет второй обработчик.
-    """
+    """Подключить файловый обработчик с ротацией к логгеру операций."""
     settings = SettingsLoader()
     logger = logging.getLogger(ACTIONS_LOGGER_NAME)
     logger.setLevel(settings.get("log_level", "INFO"))
     if logger.handlers:
+        # Повторный вызов не добавляет второй обработчик.
         return logger
 
     log_file = Path(settings.get("log_file"))

@@ -3,17 +3,13 @@
 from abc import ABC, abstractmethod
 
 from valutatrade_hub.core.exceptions import CurrencyNotFoundError
-from valutatrade_hub.core.utils import (
-    MAX_CURRENCY_CODE_LENGTH,
-    MIN_CURRENCY_CODE_LENGTH,
-    validate_currency_code,
-)
+from valutatrade_hub.core.utils import validate_currency_code
 
 
 class Currency(ABC):
     """Абстрактная валюта с общим интерфейсом отображения.
 
-    Инварианты: code — 2–5 символов в верхнем регистре без пробелов,
+    code — 2–5 символов в верхнем регистре без пробелов,
     name — непустая строка.
     """
 
@@ -37,19 +33,7 @@ class Currency(ABC):
 
     @code.setter
     def code(self, value: str) -> None:
-        is_valid_code = (
-            isinstance(value, str)
-            and MIN_CURRENCY_CODE_LENGTH <= len(value) <= MAX_CURRENCY_CODE_LENGTH
-            and value.isalnum()
-            and value.isupper()
-        )
-        if not is_valid_code:
-            raise ValueError(
-                "Код валюты должен состоять из "
-                f"{MIN_CURRENCY_CODE_LENGTH}–{MAX_CURRENCY_CODE_LENGTH} "
-                f"символов в верхнем регистре без пробелов: '{value}'"
-            )
-        self._code = value
+        self._code = validate_currency_code(value)
 
     @abstractmethod
     def get_display_info(self) -> str:

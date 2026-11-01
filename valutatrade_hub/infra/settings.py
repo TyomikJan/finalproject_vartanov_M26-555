@@ -47,11 +47,12 @@ class SettingsLoader:
         settings = dict(DEFAULT_SETTINGS)
         settings.update(self._read_pyproject_section())
         for key in PATH_KEYS & settings.keys():
+            # добавляем путь к корневой папке
             settings[key] = PROJECT_ROOT / settings[key]
         self._settings = settings
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Вернуть значение настройки или default, если ключа нет."""
+        """Возвращает значение настройки или default, если ключа нет."""
         return self._settings.get(key, default)
 
     @staticmethod
