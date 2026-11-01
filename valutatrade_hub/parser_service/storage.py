@@ -29,21 +29,6 @@ class RateMeasurement:
         return f"{self.pair_key}_{self.timestamp}"
 
 
-def _parse_timestamp(timestamp: str) -> datetime:
-    return datetime.fromisoformat(timestamp)
-
-
-def normalize_rates_cache(raw_cache: dict) -> dict:
-    """Привести содержимое rates.json к виду {"pairs": {...}, "last_refresh": ...}.
-
-    Файл старого формата (пары на верхнем уровне без "pairs") считается пустым.
-    """
-    return {
-        "pairs": dict(raw_cache.get("pairs", {})),
-        "last_refresh": raw_cache.get("last_refresh"),
-    }
-
-
 class RatesStorage:
     """Операции чтения и записи кеша курсов и их истории."""
 
@@ -51,8 +36,8 @@ class RatesStorage:
         self.database = DatabaseManager()
 
     def load_cache(self) -> dict:
-        """Вернуть текущий снимок курсов из rates.json."""
-        return normalize_rates_cache(self.database.read("rates"))
+        """Вернуть снимок курсов из rates.json; если файла ещё нет — кеш без пар."""
+        return self.database.read("rates") or {"pairs": {}, "last_refresh": None}
 
     def save_snapshot(
         self, measurements: list[RateMeasurement], refreshed_at: str
@@ -66,9 +51,9 @@ class RatesStorage:
         updated_count = 0
         for measurement in measurements:
             current_entry = cache["pairs"].get(measurement.pair_key)
-            is_newer = current_entry is None or _parse_timestamp(
+            is_newer = current_entry is None or self._parse_timestamp(
                 measurement.timestamp
-            ) > _parse_timestamp(current_entry["updated_at"])
+            ) > self._parse_timestamp(current_entry["updated_at"])
             if is_newer:
                 cache["pairs"][measurement.pair_key] = {
                     "rate": measurement.rate,
@@ -103,3 +88,7 @@ class RatesStorage:
             added_count += 1
         self.database.write("exchange_rates", records)
         return added_count
+
+    @staticmethod
+    def _parse_timestamp(timestamp: str) -> datetime:
+        return datetime.fromisoformat(timestamp)

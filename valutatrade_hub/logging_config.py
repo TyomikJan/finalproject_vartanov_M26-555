@@ -11,7 +11,7 @@
 """
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -76,7 +76,7 @@ def setup_logging() -> None:
 
 
 @contextmanager
-def parser_console_output() -> Iterator[None]:
+def parser_console_output() -> Generator[None, None, None]:
     """Временно выводить логи Parser Service в консоль (INFO, короткий формат)."""
     parser_logger = logging.getLogger(PARSER_LOGGER_NAME)
     console_handler = logging.StreamHandler()

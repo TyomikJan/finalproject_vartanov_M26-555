@@ -25,7 +25,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "rates_file": "data/rates.json",
     "exchange_rates_file": "data/exchange_rates.json",
     "rates_ttl_seconds": 300,
-    "update_interval_seconds": 600,
+    "update_interval_seconds": 240,
     "default_base_currency": "USD",
     "initial_balance": 10_000.0,
     "log_file": "logs/actions.log",

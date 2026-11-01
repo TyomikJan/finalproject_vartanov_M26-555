@@ -96,6 +96,7 @@ class BaseApiClient(ABC):
             response.status_code,
             self.last_request_meta.request_ms,
         )
+
         if response.status_code != HTTP_OK:
             api_logger.debug(
                 "%s error body: %s",
@@ -106,6 +107,7 @@ class BaseApiClient(ABC):
                 response.status_code, f"HTTP {response.status_code}"
             )
             raise ApiRequestError(reason)
+
         try:
             return response.json()
         except ValueError as error:
